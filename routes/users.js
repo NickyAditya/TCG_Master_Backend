@@ -1,86 +1,97 @@
-const express = require('express');
-const router = express.Router();
-const bcrypt = require('bcryptjs');
-const mysql = require('mysql2');
+import express from "express";
+import bcrypt from "bcryptjs";
+import mysql from "mysql2";
 
-// Create database connection
+const router = express.Router();
+
+// ✅ PAKAI ENV (BUKAN LOCALHOST)
 const db = mysql.createConnection({
-  host: "localhost",
-  user: "root",
-  password: "",
-  database: "tcg_db"
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
-// Get all users
-router.get('/', (req, res) => {
-  const sql = "SELECT id, username, email, role, balance FROM users";
-  
-  db.query(sql, (err, results) => {
-    if (err) {
-      console.error('Error fetching users:', err);
-      return res.status(500).json({ message: 'Error fetching users' });
-    }
+// GET ALL USERS
+router.get("/", (req, res) => {
+  db.query("SELECT id, username, email, role, balance FROM users", (err, results) => {
+    if (err) return res.status(500).json(err);
     res.json(results);
   });
 });
 
-// Get a single user by ID
-router.get('/:id', (req, res) => {
-  const sql = "SELECT id, username, email, role, balance FROM users WHERE id = ?";
-  
-  db.query(sql, [req.params.id], (err, results) => {
-    if (err) {
-      console.error('Error fetching user:', err);
-      return res.status(500).json({ message: 'Error fetching user' });
+// GET USER BY ID
+router.get("/:id", (req, res) => {
+  db.query(
+    "SELECT id, username, email, role, balance FROM users WHERE id = ?",
+    [req.params.id],
+    (err, results) => {
+      if (results.length === 0) return res.status(404).json({ message: "User not found" });
+      res.json(results[0]);
     }
-    
-    if (results.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-    
-    res.json(results[0]);
+  );
+});
+
+// UPDATE BALANCE
+router.post("/:id/balance", (req, res) => {
+  const { amount } = req.body;
+
+  if (!amount || isNaN(amount) || amount < 100000) {
+    return res.status(400).json({ message: "Minimum Rp 100.000" });
+  }
+
+  db.query("SELECT balance FROM users WHERE id = ?", [req.params.id], (err, results) => {
+    if (results.length === 0) return res.status(404).json({ message: "User not found" });
+
+    const newBalance = (results[0].balance || 0) + Number(amount);
+
+    db.query(
+      "UPDATE users SET balance = ? WHERE id = ?",
+      [newBalance, req.params.id],
+      (err) => {
+        if (err) return res.status(500).json(err);
+
+        res.json({
+          message: "Balance updated",
+          balance: newBalance
+        });
+      }
+    );
   });
 });
 
-// Update user balance
-router.post('/:id/balance', (req, res) => {
-  const userId = req.params.id;
-  const { amount } = req.body;
-  
-  if (!amount || isNaN(amount) || amount < 100000) {
-    return res.status(400).json({ message: 'Valid amount required (minimum Rp. 100,000)' });
+// CREATE USER
+router.post("/", (req, res) => {
+  const { username, email, password, role } = req.body;
+
+  if (!username || !email || !password) {
+    return res.status(400).json({ message: "Data tidak lengkap" });
   }
-  
-  // Get current balance first
+
+  const hashed = bcrypt.hashSync(password, 10);
+
   db.query(
-    "SELECT balance FROM users WHERE id = ?",
-    [userId],
+    "SELECT * FROM users WHERE username = ? OR email = ?",
+    [username, email],
     (err, results) => {
-      if (err) {
-        console.error('Error fetching user balance:', err);
-        return res.status(500).json({ message: 'Error updating balance' });
+      if (results.length > 0) {
+        return res.status(409).json({ message: "Sudah ada" });
       }
-      
-      if (results.length === 0) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-      
-      const currentBalance = parseFloat(results[0].balance) || 0;
-      const newBalance = currentBalance + parseFloat(amount);
-      
-      // Update balance
+
       db.query(
-        "UPDATE users SET balance = ? WHERE id = ?",
-        [newBalance, userId],
+        "INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)",
+        [username, email, hashed, role || "user"],
         (err, result) => {
-          if (err) {
-            console.error('Error updating balance:', err);
-            return res.status(500).json({ message: 'Error updating balance' });
-          }
-          
-          res.json({ 
-            message: 'Balance updated successfully',
-            balance: newBalance
+          if (err) return res.status(500).json(err);
+
+          res.status(201).json({
+            id: result.insertId,
+            username,
+            email
           });
         }
       );
@@ -88,148 +99,34 @@ router.post('/:id/balance', (req, res) => {
   );
 });
 
-// Create a new user
-router.post('/', (req, res) => {
-  const { username, email, password, role } = req.body;
-  
-  if (!username || !email || !password) {
-    return res.status(400).json({ message: 'Username, email, and password are required' });
-  }
-  
-  const hashed = bcrypt.hashSync(password, 10);
-  const userRole = role || 'user';
-  
-  // Check if username or email already exists
-  db.query(
-    "SELECT * FROM users WHERE username = ? OR email = ?",
-    [username, email],
-    (err, results) => {
-      if (err) {
-        console.error('Error checking existing user:', err);
-        return res.status(500).json({ message: 'Error creating user' });
-      }
-      
-      if (results.length > 0) {
-        return res.status(409).json({ message: 'Username or email already exists' });
-      }
-      
-      // Insert new user
-      const sql = "INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)";
-      
-      db.query(sql, [username, email, hashed, userRole], (err, result) => {
-        if (err) {
-          console.error('Error creating user:', err);
-          return res.status(500).json({ message: 'Error creating user' });
-        }
-        
-        res.status(201).json({ 
-          id: result.insertId,
-          username,
-          email,
-          role: userRole
-        });
-      });
-    }
-  );
-});
-
-// Update a user
-router.put('/:id', (req, res) => {
+// UPDATE USER
+router.put("/:id", (req, res) => {
   const { username, email, role, password } = req.body;
-  const userId = req.params.id;
-  
-  // Get the existing user to check what's being updated
-  db.query(
-    "SELECT * FROM users WHERE id = ?",
-    [userId],
-    (err, results) => {
-      if (err) {
-        console.error('Error fetching user for update:', err);
-        return res.status(500).json({ message: 'Error updating user' });
-      }
-      
-      if (results.length === 0) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-      
-      const user = results[0];
-      
-      // Check if username or email is being changed and verify they don't conflict
-      if (username !== user.username || email !== user.email) {
-        db.query(
-          "SELECT * FROM users WHERE (username = ? OR email = ?) AND id != ?",
-          [username, email, userId],
-          (err, conflicts) => {
-            if (err) {
-              console.error('Error checking for conflicts:', err);
-              return res.status(500).json({ message: 'Error updating user' });
-            }
-            
-            if (conflicts.length > 0) {
-              return res.status(409).json({ message: 'Username or email already exists' });
-            }
-            
-            // No conflicts, proceed with update
-            performUpdate();
-          }
-        );
-      } else {
-        // No potential conflicts, proceed with update
-        performUpdate();
-      }
-      
-      function performUpdate() {
-        // If password is provided, hash it
-        let updateValues = [username, email, role];
-        let updateSql = "UPDATE users SET username = ?, email = ?, role = ?";
-        
-        if (password && password.trim() !== '') {
-          const hashed = bcrypt.hashSync(password, 10);
-          updateSql += ", password = ?";
-          updateValues.push(hashed);
-        }
-        
-        updateSql += " WHERE id = ?";
-        updateValues.push(userId);
-        
-        db.query(updateSql, updateValues, (err, result) => {
-          if (err) {
-            console.error('Error updating user:', err);
-            return res.status(500).json({ message: 'Error updating user' });
-          }
-          
-          if (result.affectedRows === 0) {
-            return res.status(404).json({ message: 'User not found' });
-          }
-          
-          res.json({ 
-            id: userId,
-            username,
-            email,
-            role
-          });
-        });
-      }
-    }
-  );
-});
 
-// Delete a user
-router.delete('/:id', (req, res) => {
-  const sql = "DELETE FROM users WHERE id = ?";
-  
-  db.query(sql, [req.params.id], (err, result) => {
-    if (err) {
-      console.error('Error deleting user:', err);
-      return res.status(500).json({ message: 'Error deleting user' });
-    }
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-    
-    res.json({ message: 'User deleted successfully' });
+  let sql = "UPDATE users SET username=?, email=?, role=?";
+  let values = [username, email, role];
+
+  if (password) {
+    const hashed = bcrypt.hashSync(password, 10);
+    sql += ", password=?";
+    values.push(hashed);
+  }
+
+  sql += " WHERE id=?";
+  values.push(req.params.id);
+
+  db.query(sql, values, (err, result) => {
+    if (result.affectedRows === 0) return res.status(404).json({ message: "User not found" });
+    res.json({ message: "Updated" });
   });
 });
 
-module.exports = router;
+// DELETE USER
+router.delete("/:id", (req, res) => {
+  db.query("DELETE FROM users WHERE id = ?", [req.params.id], (err, result) => {
+    if (result.affectedRows === 0) return res.status(404).json({ message: "User not found" });
+    res.json({ message: "Deleted" });
+  });
+});
+
+export default router;
