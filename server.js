@@ -11,7 +11,8 @@ const cardRoutes = require("./routes/cards");
 const inventoryRoutes = require("./routes/inventory");
 const transactionRoutes = require("./routes/transactions");
 const uploadRoutes = require("./routes/uploads");
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
+
 
 const app = express();
 app.use(cors());
