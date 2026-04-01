@@ -1,3 +1,5 @@
+import dotenv from "dotenv";
+dotenv.config();
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
@@ -9,6 +11,7 @@ const cardRoutes = require("./routes/cards");
 const inventoryRoutes = require("./routes/inventory");
 const transactionRoutes = require("./routes/transactions");
 const uploadRoutes = require("./routes/uploads");
+const PORT = process.env.PORT || 10000;
 
 const app = express();
 app.use(cors());
@@ -75,6 +78,7 @@ app.post("/api/login", (req, res) => {
   });
 });
 
-app.listen(5000, () => {
-  console.log("Backend berjalan di http://localhost:5000");
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
